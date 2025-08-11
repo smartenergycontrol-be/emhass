@@ -86,6 +86,9 @@ class Optimization:
         self.var_load_cost = var_load_cost
         self.var_prod_price = var_prod_price
         self.optim_status = None
+        
+        # Validate per-inverter curtailment configuration
+        self._validate_curtailment_config()
         if "num_threads" in optim_conf.keys():
             if optim_conf["num_threads"] == 0:
                 self.num_threads = int(os.cpu_count())
@@ -330,12 +333,24 @@ class Optimization:
                 (i): plp.LpVariable(cat="Continuous", name=f"P_hybrid_inverter{i}")
                 for i in set_I
             }
-        P_PV_curtailment = {
-            (i): plp.LpVariable(
-                cat="Continuous", lowBound=0, name=f"P_PV_curtailment{i}"
-            )
-            for i in set_I
-        }
+        # Create curtailment variables based on configuration
+        P_PV_curtailment = {}
+        if self.plant_conf["compute_curtailment"] or any(self.plant_conf.get("compute_curtailment_list", [False])):
+            if isinstance(self.plant_conf["pv_module_model"], list):
+                # Multiple inverters - create individual curtailment variables for each enabled inverter
+                curtailment_list = self.plant_conf.get("compute_curtailment_list", [self.plant_conf["compute_curtailment"]] * len(self.plant_conf["pv_module_model"]))
+                for inv_idx in range(len(self.plant_conf["pv_module_model"])):
+                    if curtailment_list[inv_idx]:
+                        for i in set_I:
+                            P_PV_curtailment[(inv_idx, i)] = plp.LpVariable(
+                                cat="Continuous", lowBound=0, name=f"P_PV_curtailment_inv{inv_idx}_{i}"
+                            )
+            else:
+                # Single inverter - use existing logic
+                for i in set_I:
+                    P_PV_curtailment[i] = plp.LpVariable(
+                        cat="Continuous", lowBound=0, name=f"P_PV_curtailment{i}"
+                    )
 
         ## Define objective
         P_def_sum = []
@@ -451,11 +466,25 @@ class Optimization:
                 for i in set_I
             }
         else:
-            if self.plant_conf["compute_curtailment"]:
-                constraints = {
-                    f"constraint_main2_{i}": plp.LpConstraint(
+            if self.plant_conf["compute_curtailment"] or any(self.plant_conf.get("compute_curtailment_list", [False])):
+                # Calculate total curtailment across all inverters
+                constraints = {}
+                for i in set_I:
+                    total_curtailment = 0
+                    if isinstance(self.plant_conf["pv_module_model"], list):
+                        # Multiple inverters - sum curtailment from enabled inverters
+                        curtailment_list = self.plant_conf.get("compute_curtailment_list", [self.plant_conf["compute_curtailment"]] * len(self.plant_conf["pv_module_model"]))
+                        for inv_idx in range(len(self.plant_conf["pv_module_model"])):
+                            if curtailment_list[inv_idx] and (inv_idx, i) in P_PV_curtailment:
+                                total_curtailment += P_PV_curtailment[(inv_idx, i)]
+                    else:
+                        # Single inverter
+                        if i in P_PV_curtailment:
+                            total_curtailment = P_PV_curtailment[i]
+                    
+                    constraints[f"constraint_main2_{i}"] = plp.LpConstraint(
                         e=P_PV[i]
-                        - P_PV_curtailment[i]
+                        - total_curtailment
                         - P_def_sum[i]
                         - P_load[i]
                         + P_grid_neg[i]
@@ -465,8 +494,6 @@ class Optimization:
                         sense=plp.LpConstraintEQ,
                         rhs=0,
                     )
-                    for i in set_I
-                }
             else:
                 constraints = {
                     f"constraint_main3_{i}": plp.LpConstraint(
@@ -498,7 +525,7 @@ class Optimization:
                 else:
                     P_nom_inverter += self.plant_conf["pv_inverter_model"][i]
         else:
-            if isinstance(self.plant_conf["pv_inverter_model"][i], str):
+            if isinstance(self.plant_conf["pv_inverter_model"], str):
                 cec_inverters = bz2.BZ2File(
                     self.emhass_conf["root_path"] / "data" / "cec_inverters.pbz2", "rb"
                 )
@@ -536,18 +563,33 @@ class Optimization:
                     for i in set_I
                 }
             )
-        else:
-            if self.plant_conf["compute_curtailment"]:
-                constraints.update(
-                    {
-                        f"constraint_curtailment_{i}": plp.LpConstraint(
+        
+        # Add individual curtailment constraints (curtailment cannot exceed available PV power)
+        if self.plant_conf["compute_curtailment"] or any(self.plant_conf.get("compute_curtailment_list", [False])):
+            if isinstance(self.plant_conf["pv_module_model"], list):
+                # Multiple inverters - need per-inverter PV power for curtailment constraints
+                curtailment_list = self.plant_conf.get("compute_curtailment_list", [self.plant_conf["compute_curtailment"]] * len(self.plant_conf["pv_module_model"]))
+                for inv_idx in range(len(self.plant_conf["pv_module_model"])):
+                    if curtailment_list[inv_idx]:
+                        # For multiple inverters, we need to assume equal distribution of PV power
+                        # This is a simplification - in reality each inverter would have its own power output
+                        num_inverters = len(self.plant_conf["pv_module_model"])
+                        for i in set_I:
+                            if (inv_idx, i) in P_PV_curtailment:
+                                constraints[f"constraint_curtailment_inv{inv_idx}_{i}"] = plp.LpConstraint(
+                                    e=P_PV_curtailment[(inv_idx, i)] - max(P_PV[i] / num_inverters, 0),
+                                    sense=plp.LpConstraintLE,
+                                    rhs=0,
+                                )
+            else:
+                # Single inverter - use existing logic
+                for i in set_I:
+                    if i in P_PV_curtailment:
+                        constraints[f"constraint_curtailment_{i}"] = plp.LpConstraint(
                             e=P_PV_curtailment[i] - max(P_PV[i], 0),
                             sense=plp.LpConstraintLE,
                             rhs=0,
                         )
-                        for i in set_I
-                    }
-                )
 
         # Two special constraints just for a self-consumption cost function
         if self.costfun == "self-consumption":
@@ -1234,8 +1276,33 @@ class Optimization:
             opt_tp["SOC_opt"] = SOC_opt
         if self.plant_conf["inverter_is_hybrid"]:
             opt_tp["P_hybrid_inverter"] = [P_hybrid_inverter[i].varValue for i in set_I]
-        if self.plant_conf["compute_curtailment"]:
-            opt_tp["P_PV_curtailment"] = [P_PV_curtailment[i].varValue for i in set_I]
+        if self.plant_conf["compute_curtailment"] or any(self.plant_conf.get("compute_curtailment_list", [False])):
+            # Extract curtailment results - sum all inverter curtailments for backward compatibility
+            total_curtailment = []
+            for i in set_I:
+                curtailment_sum = 0
+                if isinstance(self.plant_conf["pv_module_model"], list):
+                    # Multiple inverters - sum curtailment from all enabled inverters
+                    curtailment_list = self.plant_conf.get("compute_curtailment_list", [self.plant_conf["compute_curtailment"]] * len(self.plant_conf["pv_module_model"]))
+                    for inv_idx in range(len(self.plant_conf["pv_module_model"])):
+                        if curtailment_list[inv_idx] and (inv_idx, i) in P_PV_curtailment:
+                            curtailment_sum += P_PV_curtailment[(inv_idx, i)].varValue
+                else:
+                    # Single inverter
+                    if i in P_PV_curtailment:
+                        curtailment_sum = P_PV_curtailment[i].varValue
+                total_curtailment.append(curtailment_sum)
+            opt_tp["P_PV_curtailment"] = total_curtailment
+            
+            # Also provide individual inverter curtailment results for detailed analysis
+            if isinstance(self.plant_conf["pv_module_model"], list):
+                curtailment_list = self.plant_conf.get("compute_curtailment_list", [self.plant_conf["compute_curtailment"]] * len(self.plant_conf["pv_module_model"]))
+                for inv_idx in range(len(self.plant_conf["pv_module_model"])):
+                    if curtailment_list[inv_idx]:
+                        opt_tp[f"P_PV_curtailment_inv{inv_idx}"] = [
+                            P_PV_curtailment[(inv_idx, i)].varValue if (inv_idx, i) in P_PV_curtailment else 0
+                            for i in set_I
+                        ]
         opt_tp.index = data_opt.index
 
         # Lets compute the optimal cost function
@@ -1549,6 +1616,43 @@ class Optimization:
             def_end_timestep=def_end_timestep,
         )
         return self.opt_res
+
+    def _validate_curtailment_config(self) -> None:
+        """Validate per-inverter curtailment configuration."""
+        if "compute_curtailment_list" in self.plant_conf:
+            curtailment_list = self.plant_conf["compute_curtailment_list"]
+            
+            # Check if we have multiple inverters
+            if isinstance(self.plant_conf["pv_module_model"], list):
+                num_inverters = len(self.plant_conf["pv_module_model"])
+                
+                # Validate curtailment list length
+                if len(curtailment_list) != num_inverters:
+                    self.logger.warning(
+                        f"compute_curtailment_list length ({len(curtailment_list)}) does not match "
+                        f"number of inverters ({num_inverters}). Extending/truncating to match."
+                    )
+                    # Auto-fix by extending with the global curtailment setting or truncating
+                    global_curtailment = self.plant_conf.get("compute_curtailment", False)
+                    if len(curtailment_list) < num_inverters:
+                        # Extend with global setting
+                        self.plant_conf["compute_curtailment_list"] = curtailment_list + [global_curtailment] * (num_inverters - len(curtailment_list))
+                    else:
+                        # Truncate to match
+                        self.plant_conf["compute_curtailment_list"] = curtailment_list[:num_inverters]
+                
+                # Log the final configuration
+                self.logger.info(
+                    f"Per-inverter curtailment configuration: {self.plant_conf['compute_curtailment_list']}"
+                )
+            else:
+                # Single inverter - curtailment_list should have one element
+                if len(curtailment_list) != 1:
+                    self.logger.warning(
+                        f"Single inverter configuration but compute_curtailment_list has {len(curtailment_list)} elements. "
+                        "Using first element only."
+                    )
+                    self.plant_conf["compute_curtailment_list"] = [curtailment_list[0]]
 
     @staticmethod
     def validate_def_timewindow(

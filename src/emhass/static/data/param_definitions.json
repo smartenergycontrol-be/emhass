@@ -192,6 +192,12 @@
       "Description": "Set to True to compute a special PV curtailment variable (Default False)",
       "input": "boolean",
       "default_value": false
+    },
+    "compute_curtailment_list": {
+      "friendly_name": "Per-inverter curtailment control",
+      "Description": "List of boolean values to enable/disable curtailment for each PV inverter individually. Must match the number of inverters.",
+      "input": "array.boolean",
+      "default_value": [false]
     }
   },
   "Tariff": {

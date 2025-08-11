@@ -1,0 +1,27 @@
+{
+  "_comment": "Example configuration for multiple inverters with individual curtailment control",
+  
+  "pv_module_model": [
+    "Canadian_Solar_CS3K_300MS",
+    "LG_Electronics_LG350N1C_V5"
+  ],
+  "pv_inverter_model": [
+    "SMA_America_SB7700TL_US_22__277V_",
+    "Fronius_International_GmbH__Fronius_Primo_8_1_1__208_240__240V_"
+  ],
+  "surface_tilt": [30, 15],
+  "surface_azimuth": [180, 135],
+  "modules_per_string": [16, 12],
+  "strings_per_inverter": [2, 1],
+  
+  "_comment_curtailment": "Individual curtailment control per inverter",
+  "compute_curtailment": false,
+  "compute_curtailment_list": [true, false],
+  
+  "_explanation": {
+    "setup": "Two-inverter system with different orientations",
+    "curtailment": "Main roof (inverter 0) has curtailment enabled, carport (inverter 1) disabled",
+    "use_case": "Allows curtailing main system while preserving carport production",
+    "results": "opt_res will contain P_PV_curtailment_inv0 and total P_PV_curtailment"
+  }
+}
