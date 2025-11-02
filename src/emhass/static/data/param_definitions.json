@@ -396,6 +396,12 @@
       "Description": "The number of used strings per inverter. Defaults to 1. This parameter can be a list of items to enable the simulation of mixed orientation systems.",
       "input": "array.int",
       "default_value": 1
+    },
+    "ignore_pv_feedback_during_curtailment": {
+      "friendly_name": "Ignore PV feedback during curtailment",
+      "Description": "When set to true, prevents PV forecast from being updated with real PV data, avoiding flip-flop behavior during curtailment operations",
+      "input": "boolean",
+      "default_value": false
     }
   },
   "Deferrable Loads": {
@@ -469,38 +475,32 @@
     },
     "set_battery_dynamic": {
       "friendly_name": "Set Battery dynamic (dis)charge power limiting",
-      "Description": "Set a power dynamic limiting condition to the battery power. This is an additional constraint on the battery dynamic in power per unit of time (timestep), which allows you to set a percentage of the battery’s nominal full power as the maximum power allowed for (dis)charge.",
-      "input": "boolean",
+      "Description": "Set a power dynamic limiting condition to each battery power. This is an additional constraint on the battery dynamic in power per unit of time (timestep), which allows you to set a percentage of the battery's nominal full power as the maximum power allowed for (dis)charge.",
+      "input": "array.boolean",
       "default_value": false
     },
     "battery_dynamic_max": {
       "friendly_name": "Maximum percentage of battery discharge per timestep",
-      "Description": "The maximum positive (for discharge) battery power dynamic. This is the allowed power variation (in percentage) of battery maximum power per unit of timestep",
-      "input": "float",
-      "default_value": 0.9,
-      "requires": {
-        "set_battery_dynamic": true
-      }
+      "Description": "The maximum positive (for discharge) battery power dynamic for each battery. This is the allowed power variation (in percentage) of battery maximum power per unit of timestep",
+      "input": "array.float",
+      "default_value": 0.9
     },
     "battery_dynamic_min": {
       "friendly_name": "Maximum percentage of battery charge per timestep",
-      "Description": "The maximum negative (for charge) battery power dynamic. This is the allowed power variation (in percentage) of battery maximum power per timestep.",
-      "input": "float",
-      "default_value": -0.9,
-      "requires": {
-        "set_battery_dynamic": true
-      }
+      "Description": "The maximum negative (for charge) battery power dynamic for each battery. This is the allowed power variation (in percentage) of battery maximum power per timestep.",
+      "input": "array.float",
+      "default_value": -0.9
     },
     "weight_battery_discharge": {
       "friendly_name": "Add cost weight for battery discharge",
-      "Description": "An additional weight (currency/ kWh) applied in the cost function to battery usage for discharging",
-      "input": "float",
+      "Description": "An additional weight (currency/ kWh) applied in the cost function to each battery usage for discharging",
+      "input": "array.float",
       "default_value": 0.0
     },
     "weight_battery_charge": {
       "friendly_name": "Add cost weight for battery charge",
-      "Description": "An additional weight (currency/ kWh) applied in the cost function to battery usage for charging",
-      "input": "float",
+      "Description": "An additional weight (currency/ kWh) applied in the cost function to each battery usage for charging",
+      "input": "array.float",
       "default_value": 0.0
     },
     "battery_discharge_power_max": {
@@ -562,12 +562,6 @@
       "Description": "Set this to true if you want to forbid discharging each battery power to the grid.",
       "input": "array.boolean",
       "default_value": true
-    },
-    "ignore_pv_feedback_during_curtailment": {
-      "friendly_name": "Ignore PV feedback during curtailment",
-      "Description": "When set to true, prevents PV forecast from being updated with real PV data, avoiding flip-flop behavior during curtailment operations",
-      "input": "bool",
-      "default_value": false
     }
   }
 }

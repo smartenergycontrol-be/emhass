@@ -1718,7 +1718,11 @@ def publish_data(
                     f"{batt_col} was not found in results DataFrame. Optimization task may need to be relaunched or it did not converge to a solution.",
                 )
             else:
-                custom_batt_forecast_id = params["passed_data"]["custom_batt_forecast_id"][b]
+                # Handle backwards compatibility: custom_batt_forecast_id might be a single dict or a list
+                if isinstance(params["passed_data"]["custom_batt_forecast_id"], list):
+                    custom_batt_forecast_id = params["passed_data"]["custom_batt_forecast_id"][b]
+                else:
+                    custom_batt_forecast_id = params["passed_data"]["custom_batt_forecast_id"]
                 input_data_dict["rh"].post_data(
                     opt_res_latest[batt_col],
                     idx_closest,
@@ -1732,7 +1736,11 @@ def publish_data(
                     dont_post=dont_post,
                 )
                 cols_published = cols_published + [batt_col]
-                custom_batt_soc_forecast_id = params["passed_data"]["custom_batt_soc_forecast_id"][b]
+                # Handle backwards compatibility: custom_batt_soc_forecast_id might be a single dict or a list
+                if isinstance(params["passed_data"]["custom_batt_soc_forecast_id"], list):
+                    custom_batt_soc_forecast_id = params["passed_data"]["custom_batt_soc_forecast_id"][b]
+                else:
+                    custom_batt_soc_forecast_id = params["passed_data"]["custom_batt_soc_forecast_id"]
                 input_data_dict["rh"].post_data(
                     opt_res_latest[soc_col] * 100,
                     idx_closest,

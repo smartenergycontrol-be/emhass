@@ -161,6 +161,18 @@ function loadConfigurationListView(param_definitions, config, list_html) {
         //check the EMHASS config to see if it contains a stored param value
         //else keep default
         let value = checkConfigParam(default_value, config, header_input_param);
+        
+        // Special handling for number_of_batteries for backwards compatibility
+        if (header_input_param === "number_of_batteries") {
+          // If set_use_battery is false or not set, number_of_batteries should be 0
+          if (config && (config.set_use_battery === false || !("set_use_battery" in config))) {
+            value = 0;
+          } else if (!("number_of_batteries" in config) && config && config.set_use_battery === true) {
+            // If set_use_battery is true but number_of_batteries not set, default to 1
+            value = 1;
+          }
+        }
+        
         //set value of input
         header_input_element.value = value;
         //checkboxes (for Booleans) also set value to "checked"
@@ -618,15 +630,32 @@ function headerElement(element, param_definitions, config) {
 
     //if number_of_batteries, the number of inputs in the "Battery" section should add up to number_of_batteries value in header
     case "number_of_batteries":
-      //get a list of param in section
+      let num_batteries = parseInt(element.value);
+      
+      // If 0 batteries, collapse the section
+      if (num_batteries === 0) {
+        param_container.innerHTML = "";
+        break;
+      }
+      
+      // If changing from 0 to > 0, rebuild the section
       param_list = param_container.getElementsByClassName("param");
+      if (param_list.length === 0) {
+        // Section is empty, rebuild it
+        buildParamContainers("Battery", param_definitions["Battery"], config, [
+          "number_of_batteries",
+        ]);
+        // After rebuilding, get the param list again
+        param_list = param_container.getElementsByClassName("param");
+      }
+      
       if (param_list.length <= 0) {
         console.log(
           "There has been an issue counting the amount of params in number_of_batteries"
         );
         return 1;
       }
-      let num_batteries = parseInt(element.value);
+      
       //for each array parameter, ensure it has the correct number of inputs
       for (const param of param_list) {
         let param_def = param_definitions["Battery"][param.id];
@@ -777,6 +806,11 @@ async function saveConfiguration(param_definitions) {
   // else, cant find box or list view
   else {
     errorAlert("There has been an error verifying box or list view");
+  }
+
+  // Set set_use_battery based on number_of_batteries for backwards compatibility
+  if ("number_of_batteries" in config) {
+    config.set_use_battery = config.number_of_batteries > 0;
   }
 
   //finally, send built config to emhass
