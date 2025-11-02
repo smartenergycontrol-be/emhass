@@ -1720,6 +1720,10 @@ def publish_data(
             else:
                 # Handle backwards compatibility: custom_batt_forecast_id might be a single dict or a list
                 if isinstance(params["passed_data"]["custom_batt_forecast_id"], list):
+                    # Check if the list has enough elements
+                    if b >= len(params["passed_data"]["custom_batt_forecast_id"]):
+                        logger.warning(f"No custom_batt_forecast_id defined for battery {b}, skipping publish")
+                        continue
                     custom_batt_forecast_id = params["passed_data"]["custom_batt_forecast_id"][b]
                 else:
                     custom_batt_forecast_id = params["passed_data"]["custom_batt_forecast_id"]
@@ -1738,6 +1742,10 @@ def publish_data(
                 cols_published = cols_published + [batt_col]
                 # Handle backwards compatibility: custom_batt_soc_forecast_id might be a single dict or a list
                 if isinstance(params["passed_data"]["custom_batt_soc_forecast_id"], list):
+                    # Check if the list has enough elements
+                    if b >= len(params["passed_data"]["custom_batt_soc_forecast_id"]):
+                        logger.warning(f"No custom_batt_soc_forecast_id defined for battery {b}, skipping SOC publish")
+                        continue
                     custom_batt_soc_forecast_id = params["passed_data"]["custom_batt_soc_forecast_id"][b]
                 else:
                     custom_batt_soc_forecast_id = params["passed_data"]["custom_batt_soc_forecast_id"]

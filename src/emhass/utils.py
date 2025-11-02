@@ -289,21 +289,30 @@ def treat_runtimeparams(
     # Battery forecast IDs for multiple batteries
     custom_batt_forecast_id = []
     custom_batt_soc_forecast_id = []
-    for b in range(params["optim_conf"]["number_of_batteries"]):
+    num_batteries = params["optim_conf"]["number_of_batteries"]
+    for b in range(num_batteries):
+        # For backwards compatibility: omit battery number if only one battery
+        if num_batteries == 1:
+            batt_suffix = ""
+            friendly_suffix = ""
+        else:
+            batt_suffix = str(b)
+            friendly_suffix = f" {b}"
+        
         custom_batt_forecast_id.append(
             {
-                "entity_id": f"sensor.p_batt{b}_forecast",
+                "entity_id": f"sensor.p_batt{batt_suffix}_forecast",
                 "device_class": "power",
                 "unit_of_measurement": "W",
-                "friendly_name": f"Battery {b} Power Forecast",
+                "friendly_name": f"Battery{friendly_suffix} Power Forecast",
             }
         )
         custom_batt_soc_forecast_id.append(
             {
-                "entity_id": f"sensor.soc_batt{b}_forecast",
+                "entity_id": f"sensor.soc_batt{batt_suffix}_forecast",
                 "device_class": "battery",
                 "unit_of_measurement": "%",
-                "friendly_name": f"Battery {b} SOC Forecast",
+                "friendly_name": f"Battery{friendly_suffix} SOC Forecast",
             }
         )
     default_passed_dict = {
