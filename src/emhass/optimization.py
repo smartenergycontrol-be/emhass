@@ -112,6 +112,47 @@ class Optimization:
                 "lp_solver=COIN_CMD but lp_solver_path=empty, attempting to use lp_solver_path=/usr/bin/cbc"
             )
             self.lp_solver_path = "/usr/bin/cbc"
+        # Initialize battery parameters for multiple batteries if not already done
+        if self.optim_conf.get("set_use_battery", False):
+            if "number_of_batteries" not in self.optim_conf or self.optim_conf["number_of_batteries"] == 0:
+                self.optim_conf["number_of_batteries"] = 1
+            num_batteries = self.optim_conf["number_of_batteries"]
+
+            # Initialize list parameters if not present
+            if "battery_discharge_power_max_list" not in self.plant_conf:
+                val = self.plant_conf.get("battery_discharge_power_max", 1000)
+                self.plant_conf["battery_discharge_power_max_list"] = [val] * num_batteries
+            if "battery_charge_power_max_list" not in self.plant_conf:
+                val = self.plant_conf.get("battery_charge_power_max", 1000)
+                self.plant_conf["battery_charge_power_max_list"] = [val] * num_batteries
+            if "battery_discharge_efficiency_list" not in self.plant_conf:
+                val = self.plant_conf.get("battery_discharge_efficiency", 0.95)
+                self.plant_conf["battery_discharge_efficiency_list"] = [val] * num_batteries
+            if "battery_charge_efficiency_list" not in self.plant_conf:
+                val = self.plant_conf.get("battery_charge_efficiency", 0.95)
+                self.plant_conf["battery_charge_efficiency_list"] = [val] * num_batteries
+            if "battery_nominal_energy_capacity_list" not in self.plant_conf:
+                val = self.plant_conf.get("battery_nominal_energy_capacity", 5000)
+                self.plant_conf["battery_nominal_energy_capacity_list"] = [val] * num_batteries
+            if "battery_minimum_state_of_charge_list" not in self.plant_conf:
+                val = self.plant_conf.get("battery_minimum_state_of_charge", 0.3)
+                self.plant_conf["battery_minimum_state_of_charge_list"] = [val] * num_batteries
+            if "battery_maximum_state_of_charge_list" not in self.plant_conf:
+                val = self.plant_conf.get("battery_maximum_state_of_charge", 0.9)
+                self.plant_conf["battery_maximum_state_of_charge_list"] = [val] * num_batteries
+            if "battery_target_state_of_charge_list" not in self.plant_conf:
+                val = self.plant_conf.get("battery_target_state_of_charge", 0.6)
+                self.plant_conf["battery_target_state_of_charge_list"] = [val] * num_batteries
+            if "set_nocharge_from_grid_list" not in self.optim_conf:
+                val = self.optim_conf.get("set_nocharge_from_grid", False)
+                self.optim_conf["set_nocharge_from_grid_list"] = [val] * num_batteries
+            if "set_nodischarge_to_grid_list" not in self.optim_conf:
+                val = self.optim_conf.get("set_nodischarge_to_grid", True)
+                self.optim_conf["set_nodischarge_to_grid_list"] = [val] * num_batteries
+        else:
+            if "number_of_batteries" not in self.optim_conf:
+                self.optim_conf["number_of_batteries"] = 0
+
         self.logger.debug(
             f"Initialized Optimization with retrieve_hass_conf: {retrieve_hass_conf}"
         )
@@ -311,29 +352,39 @@ class Optimization:
                 }
             )
         D = {(i): plp.LpVariable(cat="Binary", name=f"D_{i}") for i in set_I}
-        E = {(i): plp.LpVariable(cat="Binary", name=f"E_{i}") for i in set_I}
         if self.optim_conf["set_use_battery"]:
-            P_sto_pos = {
-                (i): plp.LpVariable(
-                    cat="Continuous",
-                    lowBound=0,
-                    upBound=self.plant_conf["battery_discharge_power_max"],
-                    name=f"P_sto_pos_{i}",
-                )
-                for i in set_I
-            }
-            P_sto_neg = {
-                (i): plp.LpVariable(
-                    cat="Continuous",
-                    lowBound=-self.plant_conf["battery_charge_power_max"],
-                    upBound=0,
-                    name=f"P_sto_neg_{i}",
-                )
-                for i in set_I
-            }
+            # Create SOC variables for each battery
+            E_list = []
+            for b in range(self.optim_conf["number_of_batteries"]):
+                E_list.append({(i): plp.LpVariable(cat="Binary", name=f"E_{b}_{i}") for i in set_I})
+
+            # Create battery power variables for each battery
+            P_sto_pos_list = []
+            P_sto_neg_list = []
+            for b in range(self.optim_conf["number_of_batteries"]):
+                P_sto_pos_list.append({
+                    (i): plp.LpVariable(
+                        cat="Continuous",
+                        lowBound=0,
+                        upBound=self.plant_conf["battery_discharge_power_max_list"][b],
+                        name=f"P_sto_pos_{b}_{i}",
+                    )
+                    for i in set_I
+                })
+                P_sto_neg_list.append({
+                    (i): plp.LpVariable(
+                        cat="Continuous",
+                        lowBound=-self.plant_conf["battery_charge_power_max_list"][b],
+                        upBound=0,
+                        name=f"P_sto_neg_{b}_{i}",
+                    )
+                    for i in set_I
+                })
         else:
-            P_sto_pos = {(i): i * 0 for i in set_I}
-            P_sto_neg = {(i): i * 0 for i in set_I}
+            # No batteries, create empty lists
+            E_list = []
+            P_sto_pos_list = []
+            P_sto_neg_list = []
 
         if self.costfun == "self-consumption":
             SC = {(i): plp.LpVariable(cat="Continuous", name=f"SC_{i}") for i in set_I}
@@ -415,15 +466,16 @@ class Optimization:
             self.logger.error("The cost function specified type is not valid")
         # Add more terms to the objective function in the case of battery use
         if self.optim_conf["set_use_battery"]:
-            objective = objective + plp.lpSum(
-                -0.001
-                * self.timeStep
-                * (
-                    self.optim_conf["weight_battery_discharge"] * P_sto_pos[i]
-                    - self.optim_conf["weight_battery_charge"] * P_sto_neg[i]
+            for b in range(self.optim_conf["number_of_batteries"]):
+                objective += plp.lpSum(
+                    -0.001
+                    * self.timeStep
+                    * (
+                        self.optim_conf["weight_battery_discharge"] * P_sto_pos_list[b][i]
+                        - self.optim_conf["weight_battery_charge"] * P_sto_neg_list[b][i]
+                    )
+                    for i in set_I
                 )
-                for i in set_I
-            )
 
         # Add term penalizing each startup where configured
         if (
@@ -472,8 +524,8 @@ class Optimization:
                         - P_load[i]
                         + P_grid_neg[i]
                         + P_grid_pos[i]
-                        + P_sto_pos[i]
-                        + P_sto_neg[i],
+                        + plp.lpSum(P_sto_pos_list[b][i] for b in range(self.optim_conf["number_of_batteries"]))
+                        + plp.lpSum(P_sto_neg_list[b][i] for b in range(self.optim_conf["number_of_batteries"])),
                         sense=plp.LpConstraintEQ,
                         rhs=0,
                     )
@@ -487,8 +539,8 @@ class Optimization:
                         - P_load[i]
                         + P_grid_neg[i]
                         + P_grid_pos[i]
-                        + P_sto_pos[i]
-                        + P_sto_neg[i],
+                        + plp.lpSum(P_sto_pos_list[b][i] for b in range(self.optim_conf["number_of_batteries"]))
+                        + plp.lpSum(P_sto_neg_list[b][i] for b in range(self.optim_conf["number_of_batteries"])),
                         sense=plp.LpConstraintEQ,
                         rhs=0,
                     )
@@ -582,8 +634,8 @@ class Optimization:
                             e=(
                                 P_PV[i]
                                 - P_PV_curtailment[i]
-                                + P_sto_pos[i]
-                                + P_sto_neg[i]
+                                + plp.lpSum(P_sto_pos_list[b][i] for b in range(self.optim_conf["number_of_batteries"]))
+                                + plp.lpSum(P_sto_neg_list[b][i] for b in range(self.optim_conf["number_of_batteries"]))
                             )
                             - (P_dc_ac[i] - P_ac_dc[i]),
                             sense=plp.LpConstraintEQ,
@@ -1093,166 +1145,167 @@ class Optimization:
 
         # The battery constraints
         if self.optim_conf["set_use_battery"]:
-            # Optional constraints to avoid charging the battery from the grid
-            if self.optim_conf["set_nocharge_from_grid"]:
-                constraints.update(
-                    {
-                        f"constraint_nocharge_from_grid_{i}": plp.LpConstraint(
-                            e=P_sto_neg[i] + P_PV[i], sense=plp.LpConstraintGE, rhs=0
-                        )
-                        for i in set_I
-                    }
-                )
-            # Optional constraints to avoid discharging the battery to the grid
-            if self.optim_conf["set_nodischarge_to_grid"]:
-                constraints.update(
-                    {
-                        f"constraint_nodischarge_to_grid_{i}": plp.LpConstraint(
-                            e=P_grid_neg[i] + P_PV[i], sense=plp.LpConstraintGE, rhs=0
-                        )
-                        for i in set_I
-                    }
-                )
-            # Limitation of power dynamics in power per unit of time
-            if self.optim_conf["set_battery_dynamic"]:
-                constraints.update(
-                    {
-                        f"constraint_pos_batt_dynamic_max_{i}": plp.LpConstraint(
-                            e=P_sto_pos[i + 1] - P_sto_pos[i],
-                            sense=plp.LpConstraintLE,
-                            rhs=self.timeStep
-                            * self.optim_conf["battery_dynamic_max"]
-                            * self.plant_conf["battery_discharge_power_max"],
-                        )
-                        for i in range(n - 1)
-                    }
-                )
-                constraints.update(
-                    {
-                        f"constraint_pos_batt_dynamic_min_{i}": plp.LpConstraint(
-                            e=P_sto_pos[i + 1] - P_sto_pos[i],
-                            sense=plp.LpConstraintGE,
-                            rhs=self.timeStep
-                            * self.optim_conf["battery_dynamic_min"]
-                            * self.plant_conf["battery_discharge_power_max"],
-                        )
-                        for i in range(n - 1)
-                    }
-                )
-                constraints.update(
-                    {
-                        f"constraint_neg_batt_dynamic_max_{i}": plp.LpConstraint(
-                            e=P_sto_neg[i + 1] - P_sto_neg[i],
-                            sense=plp.LpConstraintLE,
-                            rhs=self.timeStep
-                            * self.optim_conf["battery_dynamic_max"]
-                            * self.plant_conf["battery_charge_power_max"],
-                        )
-                        for i in range(n - 1)
-                    }
-                )
-                constraints.update(
-                    {
-                        f"constraint_neg_batt_dynamic_min_{i}": plp.LpConstraint(
-                            e=P_sto_neg[i + 1] - P_sto_neg[i],
-                            sense=plp.LpConstraintGE,
-                            rhs=self.timeStep
-                            * self.optim_conf["battery_dynamic_min"]
-                            * self.plant_conf["battery_charge_power_max"],
-                        )
-                        for i in range(n - 1)
-                    }
-                )
-            # Then the classic battery constraints
-            constraints.update(
-                {
-                    f"constraint_pstopos_{i}": plp.LpConstraint(
-                        e=P_sto_pos[i]
-                        - self.plant_conf["battery_discharge_efficiency"]
-                        * self.plant_conf["battery_discharge_power_max"]
-                        * E[i],
-                        sense=plp.LpConstraintLE,
-                        rhs=0,
-                    )
-                    for i in set_I
-                }
-            )
-            constraints.update(
-                {
-                    f"constraint_pstoneg_{i}": plp.LpConstraint(
-                        e=-P_sto_neg[i]
-                        - (1 / self.plant_conf["battery_charge_efficiency"])
-                        * self.plant_conf["battery_charge_power_max"]
-                        * (1 - E[i]),
-                        sense=plp.LpConstraintLE,
-                        rhs=0,
-                    )
-                    for i in set_I
-                }
-            )
-            constraints.update(
-                {
-                    f"constraint_socmax_{i}": plp.LpConstraint(
-                        e=-plp.lpSum(
-                            P_sto_pos[j]
-                            * (1 / self.plant_conf["battery_discharge_efficiency"])
-                            + self.plant_conf["battery_charge_efficiency"]
-                            * P_sto_neg[j]
-                            for j in range(i)
-                        ),
-                        sense=plp.LpConstraintLE,
-                        rhs=(
-                            self.plant_conf["battery_nominal_energy_capacity"]
-                            / self.timeStep
-                        )
-                        * (
-                            self.plant_conf["battery_maximum_state_of_charge"]
-                            - soc_init
-                        ),
-                    )
-                    for i in set_I
-                }
-            )
-            constraints.update(
-                {
-                    f"constraint_socmin_{i}": plp.LpConstraint(
-                        e=plp.lpSum(
-                            P_sto_pos[j]
-                            * (1 / self.plant_conf["battery_discharge_efficiency"])
-                            + self.plant_conf["battery_charge_efficiency"]
-                            * P_sto_neg[j]
-                            for j in range(i)
-                        ),
-                        sense=plp.LpConstraintLE,
-                        rhs=(
-                            self.plant_conf["battery_nominal_energy_capacity"]
-                            / self.timeStep
-                        )
-                        * (
-                            soc_init
-                            - self.plant_conf["battery_minimum_state_of_charge"]
-                        ),
-                    )
-                    for i in set_I
-                }
-            )
-            constraints.update(
-                {
-                    f"constraint_socfinal_{0}": plp.LpConstraint(
-                        e=plp.lpSum(
-                            P_sto_pos[i]
-                            * (1 / self.plant_conf["battery_discharge_efficiency"])
-                            + self.plant_conf["battery_charge_efficiency"]
-                            * P_sto_neg[i]
+            for b in range(self.optim_conf["number_of_batteries"]):
+                # Optional constraints to avoid charging the battery from the grid
+                if self.optim_conf["set_nocharge_from_grid_list"][b]:
+                    constraints.update(
+                        {
+                            f"constraint_nocharge_from_grid_{b}_{i}": plp.LpConstraint(
+                                e=P_sto_neg_list[b][i] + P_PV[i], sense=plp.LpConstraintGE, rhs=0
+                            )
                             for i in set_I
-                        ),
-                        sense=plp.LpConstraintEQ,
-                        rhs=(soc_init - soc_final)
-                        * self.plant_conf["battery_nominal_energy_capacity"]
-                        / self.timeStep,
+                        }
                     )
-                }
-            )
+                # Optional constraints to avoid discharging the battery to the grid
+                if self.optim_conf["set_nodischarge_to_grid_list"][b]:
+                    constraints.update(
+                        {
+                            f"constraint_nodischarge_to_grid_{b}_{i}": plp.LpConstraint(
+                                e=P_grid_neg[i] + P_PV[i], sense=plp.LpConstraintGE, rhs=0
+                            )
+                            for i in set_I
+                        }
+                    )
+                # Limitation of power dynamics in power per unit of time
+                if self.optim_conf["set_battery_dynamic"]:
+                    constraints.update(
+                        {
+                            f"constraint_pos_batt_dynamic_max_{b}_{i}": plp.LpConstraint(
+                                e=P_sto_pos_list[b][i + 1] - P_sto_pos_list[b][i],
+                                sense=plp.LpConstraintLE,
+                                rhs=self.timeStep
+                                * self.optim_conf["battery_dynamic_max"]
+                                * self.plant_conf["battery_discharge_power_max_list"][b],
+                            )
+                            for i in range(n - 1)
+                        }
+                    )
+                    constraints.update(
+                        {
+                            f"constraint_pos_batt_dynamic_min_{b}_{i}": plp.LpConstraint(
+                                e=P_sto_pos_list[b][i + 1] - P_sto_pos_list[b][i],
+                                sense=plp.LpConstraintGE,
+                                rhs=self.timeStep
+                                * self.optim_conf["battery_dynamic_min"]
+                                * self.plant_conf["battery_discharge_power_max_list"][b],
+                            )
+                            for i in range(n - 1)
+                        }
+                    )
+                    constraints.update(
+                        {
+                            f"constraint_neg_batt_dynamic_max_{b}_{i}": plp.LpConstraint(
+                                e=P_sto_neg_list[b][i + 1] - P_sto_neg_list[b][i],
+                                sense=plp.LpConstraintLE,
+                                rhs=self.timeStep
+                                * self.optim_conf["battery_dynamic_max"]
+                                * self.plant_conf["battery_charge_power_max_list"][b],
+                            )
+                            for i in range(n - 1)
+                        }
+                    )
+                    constraints.update(
+                        {
+                            f"constraint_neg_batt_dynamic_min_{b}_{i}": plp.LpConstraint(
+                                e=P_sto_neg_list[b][i + 1] - P_sto_neg_list[b][i],
+                                sense=plp.LpConstraintGE,
+                                rhs=self.timeStep
+                                * self.optim_conf["battery_dynamic_min"]
+                                * self.plant_conf["battery_charge_power_max_list"][b],
+                            )
+                            for i in range(n - 1)
+                        }
+                    )
+                # Then the classic battery constraints
+                constraints.update(
+                    {
+                        f"constraint_pstopos_{b}_{i}": plp.LpConstraint(
+                            e=P_sto_pos_list[b][i]
+                            - self.plant_conf["battery_discharge_efficiency_list"][b]
+                            * self.plant_conf["battery_discharge_power_max_list"][b]
+                            * E_list[b][i],
+                            sense=plp.LpConstraintLE,
+                            rhs=0,
+                        )
+                        for i in set_I
+                    }
+                )
+                constraints.update(
+                    {
+                        f"constraint_pstoneg_{b}_{i}": plp.LpConstraint(
+                            e=-P_sto_neg_list[b][i]
+                            - (1 / self.plant_conf["battery_charge_efficiency_list"][b])
+                            * self.plant_conf["battery_charge_power_max_list"][b]
+                            * (1 - E_list[b][i]),
+                            sense=plp.LpConstraintLE,
+                            rhs=0,
+                        )
+                        for i in set_I
+                    }
+                )
+                constraints.update(
+                    {
+                        f"constraint_socmax_{b}_{i}": plp.LpConstraint(
+                            e=-plp.lpSum(
+                                P_sto_pos_list[b][j]
+                                * (1 / self.plant_conf["battery_discharge_efficiency_list"][b])
+                                + self.plant_conf["battery_charge_efficiency_list"][b]
+                                * P_sto_neg_list[b][j]
+                                for j in range(i)
+                            ),
+                            sense=plp.LpConstraintLE,
+                            rhs=(
+                                self.plant_conf["battery_nominal_energy_capacity_list"][b]
+                                / self.timeStep
+                            )
+                            * (
+                                self.plant_conf["battery_maximum_state_of_charge_list"][b]
+                                - soc_init
+                            ),
+                        )
+                        for i in set_I
+                    }
+                )
+                constraints.update(
+                    {
+                        f"constraint_socmin_{b}_{i}": plp.LpConstraint(
+                            e=plp.lpSum(
+                                P_sto_pos_list[b][j]
+                                * (1 / self.plant_conf["battery_discharge_efficiency_list"][b])
+                                + self.plant_conf["battery_charge_efficiency_list"][b]
+                                * P_sto_neg_list[b][j]
+                                for j in range(i)
+                            ),
+                            sense=plp.LpConstraintLE,
+                            rhs=(
+                                self.plant_conf["battery_nominal_energy_capacity_list"][b]
+                                / self.timeStep
+                            )
+                            * (
+                                soc_init
+                                - self.plant_conf["battery_minimum_state_of_charge_list"][b]
+                            ),
+                        )
+                        for i in set_I
+                    }
+                )
+                constraints.update(
+                    {
+                        f"constraint_socfinal_{b}": plp.LpConstraint(
+                            e=plp.lpSum(
+                                P_sto_pos_list[b][i]
+                                * (1 / self.plant_conf["battery_discharge_efficiency_list"][b])
+                                + self.plant_conf["battery_charge_efficiency_list"][b]
+                                * P_sto_neg_list[b][i]
+                                for i in set_I
+                            ),
+                            sense=plp.LpConstraintEQ,
+                            rhs=(soc_init - soc_final)
+                            * self.plant_conf["battery_nominal_energy_capacity_list"][b]
+                            / self.timeStep,
+                        )
+                    }
+                )
         opt_model.constraints = constraints
 
         ## Finally, we call the solver to solve our optimization model:
@@ -1305,25 +1358,33 @@ class Optimization:
             P_grid_pos[i].varValue + P_grid_neg[i].varValue for i in set_I
         ]
         if self.optim_conf["set_use_battery"]:
-            opt_tp["P_batt"] = [
-                P_sto_pos[i].varValue + P_sto_neg[i].varValue for i in set_I
-            ]
-            SOC_opt_delta = [
-                (
-                    P_sto_pos[i].varValue
-                    * (1 / self.plant_conf["battery_discharge_efficiency"])
-                    + self.plant_conf["battery_charge_efficiency"]
-                    * P_sto_neg[i].varValue
-                )
-                * (self.timeStep / (self.plant_conf["battery_nominal_energy_capacity"]))
-                for i in set_I
-            ]
-            SOCinit = copy.copy(soc_init)
-            SOC_opt = []
-            for i in set_I:
-                SOC_opt.append(SOCinit - SOC_opt_delta[i])
-                SOCinit = SOC_opt[i]
-            opt_tp["SOC_opt"] = SOC_opt
+            for b in range(self.optim_conf["number_of_batteries"]):
+                opt_tp[f"P_batt{b}"] = [
+                    P_sto_pos_list[b][i].varValue + P_sto_neg_list[b][i].varValue for i in set_I
+                ]
+            # For backwards compatibility, create P_batt column when there's only one battery
+            if self.optim_conf["number_of_batteries"] == 1:
+                opt_tp["P_batt"] = opt_tp["P_batt0"]
+            for b in range(self.optim_conf["number_of_batteries"]):
+                SOC_opt_delta = [
+                    (
+                        P_sto_pos_list[b][i].varValue
+                        * (1 / self.plant_conf["battery_discharge_efficiency_list"][b])
+                        + self.plant_conf["battery_charge_efficiency_list"][b]
+                        * P_sto_neg_list[b][i].varValue
+                    )
+                    * (self.timeStep / (self.plant_conf["battery_nominal_energy_capacity_list"][b]))
+                    for i in set_I
+                ]
+                SOCinit = copy.copy(soc_init)
+                SOC_opt = []
+                for i in set_I:
+                    SOC_opt.append(SOCinit - SOC_opt_delta[i])
+                    SOCinit = SOC_opt[i]
+                opt_tp[f"SOC_opt{b}"] = SOC_opt
+            # For backwards compatibility, create SOC_opt column when there's only one battery
+            if self.optim_conf["number_of_batteries"] == 1:
+                opt_tp["SOC_opt"] = opt_tp["SOC_opt0"]
         if self.plant_conf["inverter_is_hybrid"]:
             opt_tp["P_hybrid_inverter"] = [P_hybrid_inverter[i].varValue for i in set_I]
         if self.plant_conf["compute_curtailment"]:

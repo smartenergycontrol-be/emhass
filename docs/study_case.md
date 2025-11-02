@@ -89,6 +89,37 @@ The battery state of charge plot is shown below:
 
 For this system, the total value of the obtained cost function is **-1.23 EUR**, a substantial improvement when adding a battery.
 
+## A fourth test system: a 5kW PV installation with two batteries and two deferrable loads
+
+Now we will consider a system with PV and multiple batteries. This configuration demonstrates how to set up two batteries with different characteristics and per-battery grid interaction controls. To configure multiple batteries, we set `number_of_batteries: 2` and use the list versions of battery parameters.
+
+Example configuration for multiple batteries:
+```json
+{
+  "set_use_battery": true,
+  "number_of_batteries": 2,
+  "battery_discharge_power_max_list": [2500, 3000],
+  "battery_charge_power_max_list": [2500, 3000],
+  "battery_discharge_efficiency_list": [0.95, 0.92],
+  "battery_charge_efficiency_list": [0.95, 0.92],
+  "battery_nominal_energy_capacity_list": [5000, 8000],
+  "battery_minimum_state_of_charge_list": [0.3, 0.2],
+  "battery_maximum_state_of_charge_list": [0.99, 0.95],
+  "battery_target_state_of_charge_list": [0.6, 0.5],
+  "set_nocharge_from_grid_list": [true, false],
+  "set_nodischarge_to_grid_list": [false, true]
+}
+```
+
+In this example:
+- Battery 1 (5kWh) cannot be charged from the grid but can discharge to the grid
+- Battery 2 (8kWh) can be charged from the grid but cannot discharge to the grid
+- Each battery has different efficiency ratings and power limits
+
+This configuration allows for sophisticated energy management where different batteries serve different purposes (e.g., one for self-consumption optimization, another for grid services).
+
+The optimization results for this multiple battery system show improved flexibility in energy management compared to single battery systems.
+
 ## Configuration example to pass data at runtime
 
 As we showed in the forecast module section, we can pass our own forecast data using lists of values passed at runtime using templates. However, it is possible to also pass other data during runtime to automate energy management.

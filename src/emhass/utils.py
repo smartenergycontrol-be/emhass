@@ -285,6 +285,27 @@ def treat_runtimeparams(
                 "friendly_name": f"Predicted temperature {k}",
             }
         )
+
+    # Battery forecast IDs for multiple batteries
+    custom_batt_forecast_id = []
+    custom_batt_soc_forecast_id = []
+    for b in range(params["optim_conf"]["number_of_batteries"]):
+        custom_batt_forecast_id.append(
+            {
+                "entity_id": f"sensor.p_batt{b}_forecast",
+                "device_class": "power",
+                "unit_of_measurement": "W",
+                "friendly_name": f"Battery {b} Power Forecast",
+            }
+        )
+        custom_batt_soc_forecast_id.append(
+            {
+                "entity_id": f"sensor.soc_batt{b}_forecast",
+                "device_class": "battery",
+                "unit_of_measurement": "%",
+                "friendly_name": f"Battery {b} SOC Forecast",
+            }
+        )
     default_passed_dict = {
         "custom_pv_forecast_id": {
             "entity_id": "sensor.p_pv_forecast",
@@ -310,18 +331,8 @@ def treat_runtimeparams(
             "unit_of_measurement": "W",
             "friendly_name": "PV Hybrid Inverter",
         },
-        "custom_batt_forecast_id": {
-            "entity_id": "sensor.p_batt_forecast",
-            "device_class": "power",
-            "unit_of_measurement": "W",
-            "friendly_name": "Battery Power Forecast",
-        },
-        "custom_batt_soc_forecast_id": {
-            "entity_id": "sensor.soc_batt_forecast",
-            "device_class": "battery",
-            "unit_of_measurement": "%",
-            "friendly_name": "Battery SOC Forecast",
-        },
+        "custom_batt_forecast_id": custom_batt_forecast_id,
+        "custom_batt_soc_forecast_id": custom_batt_soc_forecast_id,
         "custom_grid_forecast_id": {
             "entity_id": "sensor.p_grid_forecast",
             "device_class": "power",
@@ -1632,6 +1643,63 @@ def build_params(
         )
     else:
         logger.warning("unable to obtain parameter: number_of_deferrable_loads")
+
+    # Handle battery parameters for multiple batteries
+    if params["optim_conf"].get("set_use_battery", False):
+        # Set default number_of_batteries if not specified
+        if "number_of_batteries" not in params["optim_conf"]:
+            params["optim_conf"]["number_of_batteries"] = 1
+            logger.info("set_use_battery is True but number_of_batteries not specified, defaulting to 1")
+
+        num_batteries = params["optim_conf"]["number_of_batteries"]
+
+        # Convert single battery parameters to lists for backwards compatibility
+        params["plant_conf"]["battery_discharge_power_max_list"] = check_battery_params(
+            num_batteries, params["plant_conf"], params["optim_conf"],
+            "battery_discharge_power_max", 1000, logger
+        )
+        params["plant_conf"]["battery_charge_power_max_list"] = check_battery_params(
+            num_batteries, params["plant_conf"], params["optim_conf"],
+            "battery_charge_power_max", 1000, logger
+        )
+        params["plant_conf"]["battery_discharge_efficiency_list"] = check_battery_params(
+            num_batteries, params["plant_conf"], params["optim_conf"],
+            "battery_discharge_efficiency", 0.95, logger
+        )
+        params["plant_conf"]["battery_charge_efficiency_list"] = check_battery_params(
+            num_batteries, params["plant_conf"], params["optim_conf"],
+            "battery_charge_efficiency", 0.95, logger
+        )
+        params["plant_conf"]["battery_nominal_energy_capacity_list"] = check_battery_params(
+            num_batteries, params["plant_conf"], params["optim_conf"],
+            "battery_nominal_energy_capacity", 5000, logger
+        )
+        params["plant_conf"]["battery_minimum_state_of_charge_list"] = check_battery_params(
+            num_batteries, params["plant_conf"], params["optim_conf"],
+            "battery_minimum_state_of_charge", 0.3, logger
+        )
+        params["plant_conf"]["battery_maximum_state_of_charge_list"] = check_battery_params(
+            num_batteries, params["plant_conf"], params["optim_conf"],
+            "battery_maximum_state_of_charge", 0.9, logger
+        )
+        params["plant_conf"]["battery_target_state_of_charge_list"] = check_battery_params(
+            num_batteries, params["plant_conf"], params["optim_conf"],
+            "battery_target_state_of_charge", 0.6, logger
+        )
+
+        # Handle battery grid interaction parameters (these are in optim_conf)
+        params["optim_conf"]["set_nocharge_from_grid_list"] = check_battery_params(
+            num_batteries, params["plant_conf"], params["optim_conf"],
+            "set_nocharge_from_grid", False, logger
+        )
+        params["optim_conf"]["set_nodischarge_to_grid_list"] = check_battery_params(
+            num_batteries, params["plant_conf"], params["optim_conf"],
+            "set_nodischarge_to_grid", True, logger
+        )
+    else:
+        # No batteries, set number_of_batteries to 0
+        params["optim_conf"]["number_of_batteries"] = 0
+
     # historic_days_to_retrieve should be no less then 2
     if params["retrieve_hass_conf"].get("historic_days_to_retrieve", None) is not None:
         if params["retrieve_hass_conf"]["historic_days_to_retrieve"] < 2:
@@ -1741,9 +1809,73 @@ def check_def_loads(
             + str(default)
             + ") to parameter"
         )
-        for _x in range(len(parameter[parameter_name]), num_def_loads):
-            parameter[parameter_name].append(default)
+        parameter[parameter_name] += [default] * (
+            num_def_loads - len(parameter[parameter_name])
+        )
     return parameter[parameter_name]
+
+
+def check_battery_params(
+    num_batteries: int, plant_conf: dict, optim_conf: dict, parameter_name: str, default, logger
+):
+    """
+    Check battery parameter lists with number of batteries, if they do not match, enlarge to fit.
+    Handles arrays from UI and backwards compatibility with single/list parameters.
+
+    :param num_batteries: Total number of batteries
+    :type num_batteries: int
+    :param plant_conf: Plant configuration dictionary
+    :type plant_conf: dict
+    :param optim_conf: Optimization configuration dictionary
+    :type optim_conf: dict
+    :param parameter_name: Name of parameter
+    :type parameter_name: str
+    :param default: Default value for parameter to pad missing
+    :type default: any
+    :param logger: The logger object
+    :type logger: logging.Logger
+    :return: Parameter list
+    :rtype: list
+    """
+    # Check if parameter exists directly (new UI approach with arrays)
+    if parameter_name in plant_conf and plant_conf[parameter_name] is not None:
+        param_list = plant_conf[parameter_name]
+        if isinstance(param_list, list):
+            if len(param_list) != num_batteries:
+                logger.warning(
+                    f"{parameter_name} length ({len(param_list)}) does not match number_of_batteries ({num_batteries}), "
+                    f"adjusting with default value ({default})"
+                )
+                if len(param_list) < num_batteries:
+                    param_list += [default] * (num_batteries - len(param_list))
+                else:
+                    param_list = param_list[:num_batteries]
+            return param_list
+        else:
+            # Single value, convert to list
+            return [param_list] * num_batteries
+    elif parameter_name in optim_conf and optim_conf[parameter_name] is not None:
+        param_list = optim_conf[parameter_name]
+        if isinstance(param_list, list):
+            if len(param_list) != num_batteries:
+                logger.warning(
+                    f"{parameter_name} length ({len(param_list)}) does not match number_of_batteries ({num_batteries}), "
+                    f"adjusting with default value ({default})"
+                )
+                if len(param_list) < num_batteries:
+                    param_list += [default] * (num_batteries - len(param_list))
+                else:
+                    param_list = param_list[:num_batteries]
+            return param_list
+        else:
+            # Single value, convert to list
+            return [param_list] * num_batteries
+
+    else:
+        # No parameter found, use default
+        param_list = [default] * num_batteries
+        logger.info(f"Using default value ({default}) for {parameter_name} for {num_batteries} batteries")
+        return param_list
 
 
 def get_days_list(days_to_retrieve: int) -> pd.date_range:

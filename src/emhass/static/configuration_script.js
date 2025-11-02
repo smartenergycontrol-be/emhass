@@ -121,7 +121,7 @@ function loadConfigurationListView(param_definitions, config, list_html) {
   }
 
   //list parameters used in the section headers
-  let header_input_list = ["set_use_battery", "set_use_pv", "number_of_deferrable_loads"];
+  let header_input_list = ["set_use_pv", "number_of_deferrable_loads", "number_of_batteries"];
 
   //get the main container and append list template html
   document.getElementById("configuration-container").innerHTML = list_html;
@@ -135,32 +135,40 @@ function loadConfigurationListView(param_definitions, config, list_html) {
       config,
       header_input_list
     );
+  }
 
-    //after sections have been built, add event listeners for section header inputs
-    //loop though headers
-    for (let header_input_param of header_input_list) {
+  //after all sections have been built, add event listeners for section header inputs
+  //loop though headers
+  for (let header_input_param of header_input_list) {
+    //find the section that has this header param
+    let section_for_param = null;
+    let default_value = null;
+    for (let section in param_definitions) {
       if (param_definitions[section].hasOwnProperty(header_input_param)) {
-        //grab default from definitions file
-        let value = param_definitions[section][header_input_param]["default_value"];
-        //find input element (using the parameter name as the input element ID)
-        let header_input_element = document.getElementById(header_input_param);
-        if (header_input_element !== null) {
-          //add event listener to element (trigger on input change)
-          header_input_element.addEventListener("input", (e) =>
-            headerElement(e.target, param_definitions, config)
-          );
-          //check the EMHASS config to see if it contains a stored param value
-          //else keep default
-          value = checkConfigParam(value, config, header_input_param);
-          //set value of input
-          header_input_element.value = value;
-          //checkboxes (for Booleans) also set value to "checked"
-          if (header_input_element.type == "checkbox") {
-            header_input_element.checked = value;
-          }
-          //manually trigger the header parameter input event listener for setting up initial section state
-          headerElement(header_input_element, param_definitions, config);
+        section_for_param = section;
+        default_value = param_definitions[section][header_input_param]["default_value"];
+        break;
+      }
+    }
+    if (section_for_param !== null) {
+      //find input element (using the parameter name as the input element ID)
+      let header_input_element = document.getElementById(header_input_param);
+      if (header_input_element !== null) {
+        //add event listener to element (trigger on input change)
+        header_input_element.addEventListener("change", (e) =>
+          headerElement(e.target, param_definitions, config)
+        );
+        //check the EMHASS config to see if it contains a stored param value
+        //else keep default
+        let value = checkConfigParam(default_value, config, header_input_param);
+        //set value of input
+        header_input_element.value = value;
+        //checkboxes (for Booleans) also set value to "checked"
+        if (header_input_element.type == "checkbox") {
+          header_input_element.checked = value;
         }
+        //manually trigger the header parameter input event listener for setting up initial section state
+        headerElement(header_input_element, param_definitions, config);
       }
     }
   }
@@ -216,11 +224,12 @@ function buildParamContainers(
       continue;
     }
 
-    //if parameter type == array.* and not in "Deferrable Loads" section, append plus and minus buttons in param div
+    //if parameter type == array.* and not in "Deferrable Loads" or "Battery" section, append plus and minus buttons in param div
     let array_buttons = "";
     if (
       parameter_definition_object["input"].search("array.") > -1 &&
-      section != "Deferrable Loads"
+      section != "Deferrable Loads" &&
+      section != "Battery"
     ) {
       array_buttons = `
                   <button type="button" class="input-plus ${parameter_definition_name}">+</button>
@@ -606,7 +615,41 @@ function headerElement(element, param_definitions, config) {
         }
       }
       break;
-  }
+
+    //if number_of_batteries, the number of inputs in the "Battery" section should add up to number_of_batteries value in header
+    case "number_of_batteries":
+      //get a list of param in section
+      param_list = param_container.getElementsByClassName("param");
+      if (param_list.length <= 0) {
+        console.log(
+          "There has been an issue counting the amount of params in number_of_batteries"
+        );
+        return 1;
+      }
+      let num_batteries = parseInt(element.value);
+      //for each array parameter, ensure it has the correct number of inputs
+      for (const param of param_list) {
+        let param_def = param_definitions["Battery"][param.id];
+        if (param_def && param_def["input"].startsWith("array.")) {
+          let current_inputs = param.querySelectorAll("input").length;
+          let difference = num_batteries - current_inputs;
+          //add elements based on how many elements are missing
+          if (difference > 0) {
+            for (let i = 0; i < difference; i++) {
+              //append element, do not pass config to obtain default parameter from definitions file
+              plusElements(param.id, param_definitions, "Battery", {});
+            }
+          }
+          //subtract elements based how many elements its over
+          if (difference < 0) {
+            for (let i = 0; i < Math.abs(difference); i++) {
+              minusElements(param.id);
+            }
+          }
+        }
+      }
+      break;
+   }
 }
 
 //checks parameter value in config, updates value if exists

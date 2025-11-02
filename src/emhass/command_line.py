@@ -1246,7 +1246,7 @@ def export_influxdb_to_csv_direct(
         logger.info(f"No end_time specified, using current time: {end_dt}")
 
     # Create days list for data retrieval
-    days_list = pd.date_range(start=start_dt.date(), end=end_dt.date(), freq='D', tz=rh.time_zone)
+    days_list = pd.date_range(start=start_dt.date(), end=end_dt.date(), freq="D", tz=rh.time_zone)
 
     if len(days_list) == 0:
         logger.error("No days to retrieve. Check start_time and end_time.")
@@ -1279,7 +1279,7 @@ def export_influxdb_to_csv_direct(
         df_export = df_export.resample(resample_freq).mean()
 
         # Remove any rows with all NaN values
-        df_export = df_export.dropna(how='all')
+        df_export = df_export.dropna(how="all")
 
         if df_export.empty:
             logger.error("No data after resampling. Check frequency and data availability.")
@@ -1293,13 +1293,13 @@ def export_influxdb_to_csv_direct(
 
     # Reset index to make timestamp a column
     df_export = df_export.reset_index()
-    df_export = df_export.rename(columns={'index': timestamp_col})
+    df_export = df_export.rename(columns={"index": timestamp_col})
 
     # Clean column names (remove 'sensor.' prefix if present)
     column_mapping = {}
     for col in df_export.columns:
-        if col != timestamp_col and col.startswith('sensor.'):
-            column_mapping[col] = col.replace('sensor.', '')
+        if col != timestamp_col and col.startswith("sensor."):
+            column_mapping[col] = col.replace("sensor.", "")
     df_export = df_export.rename(columns=column_mapping)
 
     # Handle NaN values according to specified method
@@ -1316,7 +1316,7 @@ def export_influxdb_to_csv_direct(
         elif handle_nan == "interpolate":
             # Interpolate only numeric columns (not timestamp)
             numeric_cols = df_export.select_dtypes(include=[np.number]).columns
-            df_export[numeric_cols] = df_export[numeric_cols].interpolate(method='linear', limit_direction='both')
+            df_export[numeric_cols] = df_export[numeric_cols].interpolate(method="linear", limit_direction="both")
             # Fill any remaining NaN at edges with forward/backward fill
             df_export[numeric_cols] = df_export[numeric_cols].ffill().bfill()
             logger.info("Interpolated NaN values")
@@ -1418,7 +1418,7 @@ def export_influxdb_to_csv(
         logger.info(f"No end_time specified, using current time: {end_dt}")
 
     # Create days list for data retrieval
-    days_list = pd.date_range(start=start_dt.date(), end=end_dt.date(), freq='D', tz=rh.time_zone)
+    days_list = pd.date_range(start=start_dt.date(), end=end_dt.date(), freq="D", tz=rh.time_zone)
 
     if len(days_list) == 0:
         logger.error("No days to retrieve. Check start_time and end_time.")
@@ -1451,7 +1451,7 @@ def export_influxdb_to_csv(
         df_export = df_export.resample(resample_freq).mean()
 
         # Remove any rows with all NaN values
-        df_export = df_export.dropna(how='all')
+        df_export = df_export.dropna(how="all")
 
         if df_export.empty:
             logger.error("No data after resampling. Check frequency and data availability.")
@@ -1465,13 +1465,13 @@ def export_influxdb_to_csv(
 
     # Reset index to make timestamp a column
     df_export = df_export.reset_index()
-    df_export = df_export.rename(columns={'index': timestamp_col})
+    df_export = df_export.rename(columns={"index": timestamp_col})
 
     # Clean column names (remove 'sensor.' prefix if present)
     column_mapping = {}
     for col in df_export.columns:
-        if col != timestamp_col and col.startswith('sensor.'):
-            column_mapping[col] = col.replace('sensor.', '')
+        if col != timestamp_col and col.startswith("sensor."):
+            column_mapping[col] = col.replace("sensor.", "")
     df_export = df_export.rename(columns=column_mapping)
 
     # Save to CSV
@@ -1710,41 +1710,42 @@ def publish_data(
                 cols_published = cols_published + [f"predicted_temp_heater{k}"]
     # Publish battery power
     if input_data_dict["opt"].optim_conf["set_use_battery"]:
-        if "P_batt" not in opt_res_latest.columns:
-            logger.error(
-                "P_batt was not found in results DataFrame. Optimization task may need to be relaunched or it did not converge to a solution.",
-            )
-        else:
-            custom_batt_forecast_id = params["passed_data"]["custom_batt_forecast_id"]
-            input_data_dict["rh"].post_data(
-                opt_res_latest["P_batt"],
-                idx_closest,
-                custom_batt_forecast_id["entity_id"],
-                "power",
-                custom_batt_forecast_id["unit_of_measurement"],
-                custom_batt_forecast_id["friendly_name"],
-                type_var="batt",
-                publish_prefix=publish_prefix,
-                save_entities=entity_save,
-                dont_post=dont_post,
-            )
-            cols_published = cols_published + ["P_batt"]
-            custom_batt_soc_forecast_id = params["passed_data"][
-                "custom_batt_soc_forecast_id"
-            ]
-            input_data_dict["rh"].post_data(
-                opt_res_latest["SOC_opt"] * 100,
-                idx_closest,
-                custom_batt_soc_forecast_id["entity_id"],
-                "battery",
-                custom_batt_soc_forecast_id["unit_of_measurement"],
-                custom_batt_soc_forecast_id["friendly_name"],
-                type_var="SOC",
-                publish_prefix=publish_prefix,
-                save_entities=entity_save,
-                dont_post=dont_post,
-            )
-            cols_published = cols_published + ["SOC_opt"]
+        for b in range(input_data_dict["opt"].optim_conf["number_of_batteries"]):
+            batt_col = f"P_batt{b}"
+            soc_col = f"SOC_opt{b}"
+            if batt_col not in opt_res_latest.columns:
+                logger.error(
+                    f"{batt_col} was not found in results DataFrame. Optimization task may need to be relaunched or it did not converge to a solution.",
+                )
+            else:
+                custom_batt_forecast_id = params["passed_data"]["custom_batt_forecast_id"][b]
+                input_data_dict["rh"].post_data(
+                    opt_res_latest[batt_col],
+                    idx_closest,
+                    custom_batt_forecast_id["entity_id"],
+                    "power",
+                    custom_batt_forecast_id["unit_of_measurement"],
+                    custom_batt_forecast_id["friendly_name"],
+                    type_var="batt",
+                    publish_prefix=publish_prefix,
+                    save_entities=entity_save,
+                    dont_post=dont_post,
+                )
+                cols_published = cols_published + [batt_col]
+                custom_batt_soc_forecast_id = params["passed_data"]["custom_batt_soc_forecast_id"][b]
+                input_data_dict["rh"].post_data(
+                    opt_res_latest[soc_col] * 100,
+                    idx_closest,
+                    custom_batt_soc_forecast_id["entity_id"],
+                    "battery",
+                    custom_batt_soc_forecast_id["unit_of_measurement"],
+                    custom_batt_soc_forecast_id["friendly_name"],
+                    type_var="SOC",
+                    publish_prefix=publish_prefix,
+                    save_entities=entity_save,
+                    dont_post=dont_post,
+                )
+                cols_published = cols_published + [soc_col]
     # Publish grid power
     custom_grid_forecast_id = params["passed_data"]["custom_grid_forecast_id"]
     input_data_dict["rh"].post_data(

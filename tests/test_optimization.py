@@ -192,9 +192,25 @@ class TestOptimization(unittest.TestCase):
         )
         # Test the battery, dynamics and grid exchange contraints
         self.optim_conf.update({"set_use_battery": True})
+        self.optim_conf.update({"number_of_batteries": 1})
         self.optim_conf.update({"set_nocharge_from_grid": True})
         self.optim_conf.update({"set_battery_dynamic": True})
         self.optim_conf.update({"set_nodischarge_to_grid": True})
+        # Update list versions for multiple batteries
+        self.plant_conf.update({
+            "battery_discharge_power_max_list": [1000],
+            "battery_charge_power_max_list": [1000],
+            "battery_discharge_efficiency_list": [0.95],
+            "battery_charge_efficiency_list": [0.95],
+            "battery_nominal_energy_capacity_list": [5000],
+            "battery_minimum_state_of_charge_list": [0.3],
+            "battery_maximum_state_of_charge_list": [0.9],
+            "battery_target_state_of_charge_list": [0.6],
+        })
+        self.optim_conf.update({
+            "set_nocharge_from_grid_list": [True],
+            "set_nodischarge_to_grid_list": [True],
+        })
         self.opt = Optimization(
             self.retrieve_hass_conf,
             self.optim_conf,

@@ -122,11 +122,32 @@ Solution (2) would be to use SolCast and pass that data directly to emhass as a 
 
 If your system has a battery (set_use_battery=True), then you should define the following parameters:
 
-- `battery_discharge_power_max`: The maximum discharge power in Watts. Defaults to 1000.
-- `battery_charge_power_max`: The maximum charge power in Watts. Defaults to 1000.
-- `battery_discharge_efficiency`: The discharge efficiency. Defaults to 0.95.
-- `battery_charge_efficiency`: The charge efficiency. Defaults to 0.95.
-- `battery_nominal_energy_capacity`: The total capacity of the battery stack in Wh. Defaults to 5000.
-- `battery_minimum_state_of_charge`: The minimum allowable battery state of charge. Defaults to 0.3.
-- `battery_maximum_state_of_charge`: The maximum allowable battery state of charge. Defaults to 0.9.
-- `battery_target_state_of_charge`: The desired battery state of charge at the end of each optimization cycle. Defaults to 0.6.
+- `number_of_batteries`: The number of batteries in your system. Defaults to 1. When set to a value greater than 1, you should use the list versions of battery parameters described below.
+- `battery_discharge_power_max`: The maximum discharge power in Watts. Defaults to 1000. For multiple batteries, use `battery_discharge_power_max_list`.
+- `battery_charge_power_max`: The maximum charge power in Watts. Defaults to 1000. For multiple batteries, use `battery_charge_power_max_list`.
+- `battery_discharge_efficiency`: The discharge efficiency. Defaults to 0.95. For multiple batteries, use `battery_discharge_efficiency_list`.
+- `battery_charge_efficiency`: The charge efficiency. Defaults to 0.95. For multiple batteries, use `battery_charge_efficiency_list`.
+- `battery_nominal_energy_capacity`: The total capacity of the battery stack in Wh. Defaults to 5000. For multiple batteries, use `battery_nominal_energy_capacity_list`.
+- `battery_minimum_state_of_charge`: The minimum allowable battery state of charge. Defaults to 0.3. For multiple batteries, use `battery_minimum_state_of_charge_list`.
+- `battery_maximum_state_of_charge`: The maximum allowable battery state of charge. Defaults to 0.9. For multiple batteries, use `battery_maximum_state_of_charge_list`.
+- `battery_target_state_of_charge`: The desired battery state of charge at the end of each optimization cycle. Defaults to 0.6. For multiple batteries, use `battery_target_state_of_charge_list`.
+
+### Multiple Battery Configuration
+
+When configuring multiple batteries (`number_of_batteries > 1`), use the list versions of the battery parameters. Each list should contain one value per battery. If a list has fewer values than the number of batteries, the last value will be repeated for the remaining batteries.
+
+Example for 2 batteries with different capacities:
+```json
+{
+  "number_of_batteries": 2,
+  "battery_nominal_energy_capacity_list": [5000, 8000],
+  "battery_discharge_power_max_list": [2500, 3000],
+  "battery_charge_power_max_list": [2500, 3000]
+}
+```
+
+For per-battery grid interaction control, use the list versions of the grid parameters:
+- `set_nocharge_from_grid_list`: A list of boolean values indicating whether each battery can be charged from the grid. For example: `[true, false]` means the first battery cannot be charged from grid but the second can.
+- `set_nodischarge_to_grid_list`: A list of boolean values indicating whether each battery can discharge to the grid. For example: `[false, true]` means the first battery can discharge to grid but the second cannot.
+
+If the list versions are not provided, the single battery parameters (`set_nocharge_from_grid`, `set_nodischarge_to_grid`) will be applied to all batteries for backwards compatibility.
