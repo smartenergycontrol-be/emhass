@@ -169,18 +169,18 @@ class Forecast:
             self.params = json.loads(params)
 
         if self.method_ts_round == "nearest":
-            self.start_forecast = pd.Timestamp(
-                datetime.now(), tz=self.time_zone
-            ).replace(microsecond=0)
+            self.start_forecast = pd.Timestamp.now(tz=self.time_zone).replace(
+                microsecond=0
+            )
         elif self.method_ts_round == "first":
             self.start_forecast = (
-                pd.Timestamp(datetime.now(), tz=self.time_zone)
+                pd.Timestamp.now(tz=self.time_zone)
                 .replace(microsecond=0)
                 .floor(freq=self.freq)
             )
         elif self.method_ts_round == "last":
             self.start_forecast = (
-                pd.Timestamp(datetime.now(), tz=self.time_zone)
+                pd.Timestamp.now(tz=self.time_zone)
                 .replace(microsecond=0)
                 .ceil(freq=self.freq)
             )
@@ -381,7 +381,9 @@ class Forecast:
                 data_15min = pd.DataFrame.from_dict(data_raw["minutely_15"])
                 # Date/times in the Open-Meteo JSON are now unix timestamps and need to
                 # be converted locally to DST/TimeZone aware date/times.
-                data_15min["time"] = pd.to_datetime(data_15min["time"], unit="s", utc=True)
+                data_15min["time"] = pd.to_datetime(
+                    data_15min["time"], unit="s", utc=True
+                )
                 data_15min["time"] = data_15min["time"].dt.tz_convert(self.time_zone)
                 data_15min.set_index("time", inplace=True)
 
@@ -602,7 +604,12 @@ class Forecast:
                     data_tmp = pd.DataFrame.from_dict(data_dict)
                     data_tmp.set_index("ts", inplace=True)
                     data_tmp.index = pd.to_datetime(data_tmp.index)
-                    data_tmp = data_tmp.tz_localize(self.forecast_dates.tz)
+                    # Localize using explicit ambiguous/nonexistent handling to survive DST transitions
+                    data_tmp = data_tmp.tz_localize(
+                        self.forecast_dates.tz,
+                        ambiguous="infer",
+                        nonexistent="shift_forward",
+                    )
                     data_tmp = data_tmp.reindex(index=self.forecast_dates)
                     mask_up_data_df = (
                         data_tmp.copy(deep=True).fillna(method="ffill").isnull()
@@ -830,7 +837,9 @@ class Forecast:
                     # Extracting results for AC power
                     P_PV_forecast = mc.results.ac
         if set_mix_forecast:
-            ignore_pv_feedback = self.params["passed_data"].get("ignore_pv_feedback_during_curtailment", False)
+            ignore_pv_feedback = self.params["passed_data"].get(
+                "ignore_pv_feedback_during_curtailment", False
+            )
             P_PV_forecast = Forecast.get_mix_forecast(
                 df_now,
                 P_PV_forecast,
@@ -1065,18 +1074,18 @@ class Forecast:
             microsecond=0
         )
         if self.method_ts_round == "nearest":
-            start_forecast_csv = pd.Timestamp(
-                datetime.now(), tz=self.time_zone
-            ).replace(microsecond=0)
+            start_forecast_csv = pd.Timestamp.now(tz=self.time_zone).replace(
+                microsecond=0
+            )
         elif self.method_ts_round == "first":
             start_forecast_csv = (
-                pd.Timestamp(datetime.now(), tz=self.time_zone)
+                pd.Timestamp.now(tz=self.time_zone)
                 .replace(microsecond=0)
                 .floor(freq=self.freq)
             )
         elif self.method_ts_round == "last":
             start_forecast_csv = (
-                pd.Timestamp(datetime.now(), tz=self.time_zone)
+                pd.Timestamp.now(tz=self.time_zone)
                 .replace(microsecond=0)
                 .ceil(freq=self.freq)
             )
@@ -1243,6 +1252,15 @@ class Forecast:
                         index=fcst_index,
                     )
                 forecast_out = pd.concat([forecast_out, forecast_tp], axis=0)
+        merged = pd.merge_asof(
+            df_final.sort_index(),
+            forecast_out.sort_index(),
+            left_index=True,
+            right_index=True,
+            direction="nearest",
+        )
+        # Keep only forecast_out columns
+        forecast_out = merged[forecast_out.columns]
         return forecast_out
 
     @staticmethod
@@ -1416,8 +1434,14 @@ class Forecast:
             with open(data_path, "rb") as fid:
                 data, _, _, _ = pickle.load(fid)
             # Ensure the data index is timezone-aware and matches self.forecast_dates' timezone
+            # Use explicit ambiguous/nonexistent handling when localizing naive indexes so
+            # DST forward transitions (skipped times) do not raise NonExistentTimeError.
             data.index = (
-                data.index.tz_localize(self.forecast_dates.tz)
+                data.index.tz_localize(
+                    self.forecast_dates.tz,
+                    ambiguous="infer",
+                    nonexistent="shift_forward",
+                )
                 if data.index.tz is None
                 else data.index.tz_convert(self.forecast_dates.tz)
             )
@@ -1467,9 +1491,7 @@ class Forecast:
             forecast_horizon = len(self.forecast_dates)
             historical_values = df.iloc[-forecast_horizon:]
             forecast_out = pd.DataFrame(
-                historical_values.values,
-                index=self.forecast_dates,
-                columns=["yhat"]
+                historical_values.values, index=self.forecast_dates, columns=["yhat"]
             )
         elif (
             method == "mlforecaster"
